@@ -1,7 +1,7 @@
 // PROD:
 // const API_BASE_URL = "https://your-backend-name.onrender.com";
 // DEV:
-export const API_BASE_URL = "http://localhost:8000";
+export const API_BASE_URL = "https://prothexai.onrender.com";
 
 export async function apiRequest(endpoint, method = "GET", data = null) {
     const token = localStorage.getItem("token")
