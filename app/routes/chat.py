@@ -42,19 +42,42 @@ _chat_model = None
 
 def _get_chat_model():
     global _chat_model
-    if _chat_model is None:
-        import google.generativeai as genai
-        genai.configure(api_key=settings.GEMINI_API_KEY)
-        _chat_model = genai.GenerativeModel(
-            "gemini-2.0-flash",
-            system_instruction=CLINICAL_SYSTEM_PROMPT
-        )
-    return _chat_model
+    try:
+        if _chat_model is None:
+            import google.generativeai as genai
+            genai.configure(api_key=settings.GEMINI_API_KEY)
+            _chat_model = genai.GenerativeModel(
+                "gemini-2.0-flash",
+                system_instruction=CLINICAL_SYSTEM_PROMPT
+            )
+        return _chat_model
+    except Exception as e:
+        logger.error(f"Failed to initialize Gemini Model: {e}")
+        return None
+
+def _get_fallback_response(user_message: str) -> str:
+    """Simple rule-based fallback when AI is unavailable."""
+    msg = user_message.lower()
+    
+    if any(word in msg for word in ["pain", "hurt", "sore", "rubbing", "blister", "red"]):
+        return "I'm having trouble connecting to the AI analysis, but based on your keywords: Please check your residual limb for any redness or pressure marks immediately. If pain persists, contact your prosthetist."
+    
+    if any(word in msg for word in ["gait", "walk", "step", "speed", "balance"]):
+        return "I'm currently offline, but you can view your detailed gait metrics (symmetry, step length, cadence) directly on the 'Gait Analysis' tab of your dashboard."
+        
+    if any(word in msg for word in ["battery", "charge", "power"]):
+        return "Please ensure your device is charged. For specific hardware issues, refer to your device manual or contact support."
+    
+    return "I am currently unable to access the advanced clinical AI. Please check your internet connection or try again later. In the meantime, you can review your daily metrics on the dashboard."
 
 async def _generate_chat_response(user_message: str, history: list) -> str:
     """Generate a response from Gemini given the user message and conversation history."""
     try:
         model = _get_chat_model()
+        
+        if not model:
+            logger.warning("Gemini model not initialized, using fallback.")
+            return _get_fallback_response(user_message)
         
         # Build conversation context from history (last 10 messages for performance)
         recent_history = history[-10:] if len(history) > 10 else history
@@ -75,7 +98,8 @@ async def _generate_chat_response(user_message: str, history: list) -> str:
         return response.text
     except Exception as e:
         logger.error(f"Gemini Chat Error: {str(e)}")
-        return "Clinical AI is temporarily unavailable. Please try again later."
+        # Return fallback instead of generic error
+        return _get_fallback_response(user_message)
 
 # ─── Helper: Resolve patient_id ────────────────────────────
 async def _resolve_patient_id(current_user: dict):
