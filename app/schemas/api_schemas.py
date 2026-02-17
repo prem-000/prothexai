@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -10,6 +10,13 @@ class UserRegister(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=128)
     role: UserRole
+
+    @field_validator("email")
+    @classmethod
+    def validate_gmail(cls, value: EmailStr):
+        if not value.lower().endswith("@gmail.com"):
+            raise ValueError("Only Gmail addresses are allowed")
+        return value
 
 class LoginRequest(BaseModel):
     email: EmailStr
