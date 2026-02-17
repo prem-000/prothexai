@@ -1,7 +1,53 @@
 from app.database import get_db
-from app.services.gemini_service import generate_medical_analysis
+
 from datetime import datetime, timedelta, timezone
 from bson import ObjectId
+
+def generate_clinical_summary(metrics: dict) -> list[str]:
+    summary = []
+
+    symmetry = metrics.get("gait_symmetry_index", 0)
+    step_length = metrics.get("step_length_cm", 0)
+    cadence = metrics.get("cadence_spm", 0)
+    health_score = metrics.get("prosthetic_health_score", 0)
+    skin_risk = metrics.get("skin_risk", "unknown")
+
+    # Line 1: Overall Health
+    if health_score >= 80:
+        summary.append("Overall prosthetic performance is stable with strong biomechanical efficiency.")
+    elif health_score >= 60:
+        summary.append("Moderate prosthetic stability observed; minor biomechanical deviations detected.")
+    else:
+        summary.append("Reduced prosthetic efficiency detected; clinical review recommended.")
+
+    # Line 2: Gait Symmetry
+    # Assuming metrics passed are already scaled or needing scaling. 
+    # If the system uses 0-1 for symmetry, we should scale it to 0-100 here or before passing.
+    # Based on user logic (>= 90), it expects 0-100.
+    if symmetry < 1.1: # Heuristic to detect 0-1 scale
+         symmetry = symmetry * 100
+    
+    if symmetry >= 90:
+        summary.append("Gait symmetry is within optimal clinical range.")
+    elif symmetry >= 75:
+        summary.append("Mild asymmetry present; corrective gait monitoring advised.")
+    else:
+        summary.append("Significant gait asymmetry detected; rehabilitation adjustment suggested.")
+
+    # Line 3: Step & Cadence
+    summary.append(
+        f"Step length averages {step_length} cm with cadence at {cadence} steps/min, indicating functional mobility status."
+    )
+
+    # Line 4: Skin Risk
+    if str(skin_risk).lower() == "high":
+        summary.append("Elevated skin risk detected; immediate prosthetic fit assessment recommended.")
+    elif str(skin_risk).lower() == "moderate":
+        summary.append("Moderate skin stress observed; monitor tissue condition closely.")
+    else:
+        summary.append("Skin integrity remains within safe tolerance levels.")
+
+    return summary
 
 async def get_patient_health_summary(patient_id: ObjectId):
     db = get_db()
@@ -37,51 +83,21 @@ async def get_patient_health_summary(patient_id: ObjectId):
         gait_abnormality = "No Data"
         skin_risk = "No Data"
     
-    # 4. Prepare improved structured prompt
-    cli = {
-        "gender": profile.get("gender", "Unknown"),
-        "bmi": profile.get("bmi", 0),
-        "bp": f"{profile.get('blood_pressure_systolic', 0)}/{profile.get('blood_pressure_diastolic', 0)}",
-        "sugar": profile.get("blood_sugar_mg_dl", 0)
+    # 4. Generate Clinical Summary (Rule-Based)
+    latest_metrics = {
+        "gait_symmetry_index": avg_gait_symmetry, # Will be scaled inside function if < 1.1
+        "step_length_cm": round(avg_step_length_cm, 1),
+        "cadence_spm": round(avg_cadence_spm, 1),
+        "prosthetic_health_score": round(avg_health_score, 1),
+        "skin_risk": skin_risk
     }
     
-    prompt = f"""
-You are a prosthetic biomechanics specialist.
-
-Patient Clinical Profile:
-Gender: {cli['gender']}
-BMI: {cli['bmi']}
-Blood Pressure: {cli['bp']}
-Blood Sugar: {cli['sugar']} mg/dL
-
-Biomechanical Metrics (Weekly Averages):
-Step Length: {avg_step_length_cm:.1f} cm
-Cadence: {avg_cadence_spm:.1f} spm
-Walking Speed: {avg_walking_speed_mps:.2f} m/s
-Gait Symmetry: {avg_gait_symmetry:.2f}
-Pressure Distribution: {avg_pressure_distribution:.2f}
-Skin Temperature: {avg_skin_temp:.1f} °C
-Skin Moisture: {avg_skin_moisture:.1f} %
-
-Analyze the patient's prosthetic health based on the above metrics. Write strictly 2-3 lines of paragraph summarizing the key gait issues, stability, and clinical risks. Do not use bullet points.
-"""
-
-    try:
-        import asyncio
-        # Add a 15-second timeout for the AI call
-        analysis_text = await asyncio.wait_for(generate_medical_analysis(prompt), timeout=15.0)
-    except Exception as e:
-        error_msg = str(e)
-        print(f"AI ENGINE ERROR: {error_msg}")
-        
-        if "429" in error_msg or "Quota exceeded" in error_msg:
-             analysis_text = "AI Clinical Interpretation based on patient health temporarily unavailable due to high usage. Please try again later."
-        else:
-             analysis_text = f"AI interpretation failed to generate. Error: {error_msg}. Please check system logs and API key configuration."
+    analysis_lines = generate_clinical_summary(latest_metrics)
     
-    print("--- GENERATING AI ANALYSIS ---")
-    print(analysis_text)
-    print("------------------------------")
+    print("--- GENERATING CLINICAL SUMMARY ---")
+    for line in analysis_lines:
+        print(line)
+    print("-----------------------------------")
     
     from app.services.ai_engine import ai_engine
     composite_metrics = {
@@ -110,15 +126,15 @@ Analyze the patient's prosthetic health based on the above metrics. Write strict
             "overall_clinical_risk": clinical_risk
         },
         "clinical_profile": {
-            "gender": cli["gender"],
+            "gender": profile.get("gender", "Unknown"),
             "height_cm": profile.get("height_cm"),
             "weight_kg": profile.get("weight_kg"),
-            "bmi": cli["bmi"],
-            "blood_pressure": cli["bp"],
-            "blood_sugar_mg_dl": cli["sugar"],
+            "bmi": profile.get("bmi", 0),
+            "blood_pressure": f"{profile.get('blood_pressure_systolic', 0)}/{profile.get('blood_pressure_diastolic', 0)}",
+            "blood_sugar_mg_dl": profile.get("blood_sugar_mg_dl", 0),
             "medical_conditions": profile.get("medical_conditions", [])
         },
-        "analysis": analysis_text,
+        "analysis": analysis_lines,
         "patient_name": profile.get('name', 'Unknown'),
         "patient_age": profile.get('age', 0),
         "recent_alerts": []

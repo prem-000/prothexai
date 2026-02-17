@@ -189,10 +189,18 @@ def generate_medical_pdf(data: dict):
     elements.append(risk_table)
     elements.append(Spacer(1, 0.3 * inch))
     
-    # AI Analysis Section
-    elements.append(Paragraph("AI Clinical Interpretation & Recommendations", header_style))
-    analysis_text = data['analysis'].replace('\n', '<br/>')
-    elements.append(Paragraph(analysis_text, body_style))
+    # Clinical Analysis Section
+    elements.append(Paragraph("Clinical Analysis Summary", header_style))
+    analysis_data = data.get('analysis', [])
+    
+    if isinstance(analysis_data, list):
+        for line in analysis_data:
+             elements.append(Paragraph(line, body_style))
+             elements.append(Spacer(1, 0.05 * inch))
+    else:
+        # Fallback for old data or string format
+        analysis_text = str(analysis_data).replace('\n', '<br/>')
+        elements.append(Paragraph(analysis_text, body_style))
     elements.append(Spacer(1, 0.4 * inch))
     
     # Medical Disclaimer

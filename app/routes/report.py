@@ -48,9 +48,14 @@ async def download_report(current_user: dict = Depends(check_role("patient"))):
         analysis = cached_data.get("analysis", "")
         
         has_real_metrics = metrics.get("avg_step_length_cm") not in (None, "N/A")
-        has_valid_ai = analysis and "temporarily unavailable" not in analysis and "failed to generate" not in analysis
-        
-        if has_real_metrics and has_valid_ai:
+        has_valid_analysis = False
+        if analysis:
+            if isinstance(analysis, list):
+                has_valid_analysis = True
+            elif isinstance(analysis, str):
+                has_valid_analysis = "temporarily unavailable" not in analysis and "failed to generate" not in analysis
+
+        if has_real_metrics and has_valid_analysis:
             summary_data = cached_data
     
     if not summary_data:
