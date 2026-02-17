@@ -1,3 +1,8 @@
+// PROD:
+// const API_BASE_URL = "https://your-backend-name.onrender.com";
+// DEV:
+export const API_BASE_URL = "http://localhost:8000";
+
 export async function apiRequest(endpoint, method = "GET", data = null) {
     const token = localStorage.getItem("token")
 
@@ -17,7 +22,7 @@ export async function apiRequest(endpoint, method = "GET", data = null) {
     }
 
     try {
-        const response = await fetch(`http://localhost:8000${endpoint}`, config)
+        const response = await fetch(`${API_BASE_URL}${endpoint}`, config)
 
         if (response.status === 401) {
             localStorage.clear()

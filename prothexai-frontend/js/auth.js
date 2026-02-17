@@ -1,4 +1,4 @@
-import { apiRequest } from './api.js';
+import { apiRequest, API_BASE_URL } from './api.js';
 
 document.addEventListener('DOMContentLoaded', () => {
     // DOM Elements
@@ -174,7 +174,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             // Match backend LoginRequest schema
-            const data = await apiRequest('/auth/login', 'POST', { email, password });
+            // Using API_BASE_URL explicitly as per user request to change URL calls
+            const response = await fetch(`${API_BASE_URL}/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password })
+            });
+
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.detail || 'Incorrect email or password');
+            }
+
+            const data = await response.json();
 
             if (data && data.access_token) {
                 localStorage.setItem('token', data.access_token);
@@ -190,8 +202,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     window.location.href = 'admin.html';
                 } else {
                     // Patient role logic
-                    if (payload.patient_id) {
-                        localStorage.setItem('patient_id', payload.patient_id);
+                    if (data.patient_id || payload.patient_id) {
+                        localStorage.setItem('patient_id', data.patient_id || payload.patient_id);
                         window.location.href = 'dashboard.html';
                     } else {
                         // Registration complete but profile missing
@@ -216,9 +228,6 @@ document.addEventListener('DOMContentLoaded', () => {
         registerError.classList.add('hidden');
 
         // 2️⃣ Collect Required Fields
-        // internal Note: mapping user requested IDs to existing HTML IDs
-        // User requested: id="name", id="email", etc.
-        // Existing HTML: id="reg-name", id="reg-email", etc.
         const fullName = regName.value.trim();
         const email = regEmail.value.trim();
         const password = regPassword.value.trim();
@@ -241,7 +250,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             // 3️⃣ Send Correct POST Request
-            const response = await fetch("http://localhost:8000/auth/register", {
+            const response = await fetch(`${API_BASE_URL}/auth/register`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json"
@@ -275,7 +284,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Login Helper Function (as requested)
     async function loginUser(email, password) {
         try {
-            const response = await fetch("http://localhost:8000/auth/login", {
+            const response = await fetch(`${API_BASE_URL}/auth/login`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json"
@@ -295,28 +304,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
             localStorage.setItem("token", data.access_token);
 
-            // Need to decode token or use data from response if available to determine role
-            // The user's provided snippet assumes 'data.role' and 'data.patient_id' are in the login response directly
-            // BUT the backend returns {access_token, token_type}.
-            // So we must decode the token to get role/id as per existing logic, OR update login to return more data.
-            // USER REQUESTED CODE:
-            /*
-            if (data.role === "admin") { ... }
-            */
-            // IF the backend is NOT returning role in the login response body (it returns Token model), 
-            // then 'data.role' will be undefined.
-            // I must ensure this works. 
-            // Existing 'auth.js' decoded the JWT.
-            // I should combine the user's request with the reality of the system.
-            // I will use the decodeJWT utility which exists in this file.
-
             const payload = decodeJWT(data.access_token);
             if (!payload) throw new Error("Invalid token");
 
             localStorage.setItem('role', payload.role);
-            if (payload.patient_id) localStorage.setItem('patient_id', payload.patient_id);
+            if (data.patient_id || payload.patient_id) {
+                localStorage.setItem('patient_id', data.patient_id || payload.patient_id);
+            }
 
-            // Logic from user request, adapted to use payload properties if data doesn't have them
             const role = data.role || payload.role;
             const patientId = data.patient_id || payload.patient_id;
 
