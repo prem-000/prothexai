@@ -9,33 +9,23 @@ from bson import ObjectId
 
 router = APIRouter(prefix="/report", tags=["report"])
 
-@router.get("/report/download/{patient_id}")
-async def download_report(patient_id: str, current_user: dict = Depends(get_current_user)):
+@router.get("/patient/download-report")
+async def download_report(current_user: dict = Depends(check_role("patient"))):
     db = get_db()
     
-    # 1. Verify Patient Existence
-    # The patient_id passed in URL must match the profile
-    # If the user is a patient, ensure they can only download their own report
-    if current_user["role"] == "patient" and str(current_user.get("_id")) != patient_id:
-         # Try to see if the patient_id maps to the user's profile
-         # (Sometimes patient_id is not user_id). 
-         # Existing logic: user_id -> profile -> patient_id.
-         # Let's verify via profile.
-         pass
-    
-    # Resolve profile using the ID from URL to ensure it exists
-    try:
-        profile = await db["patient_profiles"].find_one({"_id": ObjectId(patient_id)})
-    except:
-        profile = await db["patient_profiles"].find_one({"_id": patient_id})
-        
+    # 1. Resolve patient profile internally (handle both ObjectId and legacy string)
+    user_id = current_user["_id"]
+    profile = await db["patient_profiles"].find_one({
+        "$or": [
+            {"user_id": user_id},
+            {"user_id": str(user_id)}
+        ]
+    })
     if not profile:
-        raise HTTPException(status_code=404, detail="Patient profile not found.")
-
-    # Security Check: If user is patient, user_id must match profile's user_id
-    if current_user["role"] == "patient":
-        if str(profile["user_id"]) != str(current_user["_id"]):
-             raise HTTPException(status_code=403, detail="Unauthorized to access this report.")
+        raise HTTPException(status_code=404, detail="Patient profile not found. Please register first.")
+    
+    # No extra security check needed as we derived profile from current_user tokens
+    pass
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     

@@ -398,21 +398,12 @@ if (contentLogout) {
 const btnDownload = document.getElementById('btn-download-report');
 if (btnDownload) {
     btnDownload.addEventListener('click', async () => {
-        const token = localStorage.getItem('token');
-        const decoded = parseJwt(token);
-        const patientId = decoded ? decoded.patient_id : null;
-
-        if (!patientId) {
-            alert("Could not identify patient. Please login again.");
-            return;
-        }
-
-        await downloadReport(patientId);
+        await downloadReport();
     });
 }
 
 // Dedicated Download Function
-async function downloadReport(patientId) {
+async function downloadReport() {
     const btnDownload = document.getElementById('btn-download-report');
     const originalContent = btnDownload ? btnDownload.innerHTML : '';
 
@@ -422,26 +413,15 @@ async function downloadReport(patientId) {
     }
 
     try {
-        // API_BASE_URL is usually imported, but to keep this self-contained or consistent with api.js:
-        // If api.js exports API_BASE_URL, we should use it, but here we construct the URL manually or use relative if proxy.
-        // However, the instructions gave a snippet using API_BASE.
-        // Let's assume standard fetch to the backend.
-
-        // We need to construct the URL. If running locally, http://localhost:8000. If prod, relative or full.
-        // Let's use the same logic as handleUpload (hardcoded/relative) or better yet, grab it from a shared config if possible.
-        // For now, I'll use the relative path '/report/download/' which should work with the proxy/same-origin
-        // OR if we are on VS Code Live Server (5500) and backend is 8000, we need the full URL.
-        // The previous code in dashboard.js used 'http://localhost:8000'.
-        // I will use a helper to detect environment or just use the localhost default for dev as seen in file.
-
         let baseUrl = 'http://localhost:8000';
         if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
             baseUrl = 'https://prothexai.onrender.com'; // Production Backend
         }
 
         const response = await fetch(
-            `${baseUrl}/report/download/${patientId}`,
+            `${baseUrl}/report/patient/download-report`,
             {
+                method: "GET",
                 headers: {
                     Authorization: `Bearer ${localStorage.getItem("token")}`
                 }
@@ -458,7 +438,7 @@ async function downloadReport(patientId) {
 
         const a = document.createElement("a");
         a.href = url;
-        a.download = `report_${patientId}.pdf`;
+        a.download = "ProthexaI_Report.pdf";
         document.body.appendChild(a);
         a.click();
         a.remove();
