@@ -8,14 +8,6 @@ python-jose[cryptography]
 passlib[bcrypt]
 python-dotenv
 google-generativeai
-<<<<<<< HEAD
-pydantic-settings
-pydantic[email]
-python-multipart
-apscheduler
-
-=======
 python-multipart
 apscheduler
 reportlab
->>>>>>> 55eba54 (fix: add reportlab and apscheduler for production deployment)
