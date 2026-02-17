@@ -13,25 +13,28 @@ router = APIRouter(prefix="/report", tags=["report"])
 async def download_report(current_user: dict = Depends(check_role("patient"))):
     db = get_db()
     
-    # 1. Resolve patient profile internally (handle both ObjectId and legacy string)
+    # 1. Resolve patient profile internally
+    # The current_user contains the user document from the 'users' collection.
+    # We need to find the corresponding 'patient_profile' using the user's _id.
     user_id = current_user["_id"]
+    
+    # Handle ObjectId vs String mismatch robustly
     profile = await db["patient_profiles"].find_one({
         "$or": [
             {"user_id": user_id},
             {"user_id": str(user_id)}
         ]
     })
+    
     if not profile:
         raise HTTPException(status_code=404, detail="Patient profile not found. Please register first.")
     
-    # No extra security check needed as we derived profile from current_user tokens
-    pass
-
+    patient_id = profile["_id"]
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     
     # 2. Performance Rule: Check if analysis already exists and is fresh
     cached_analysis = await db["analysis_results"].find_one({
-        "patient_id": profile["_id"], # Use the ObjectId/str from profile
+        "patient_id": patient_id,
         "date": today,
         "type": "ai_medical_report",
         "created_at": {"$gte": datetime.now(timezone.utc) - timedelta(hours=24)}
@@ -52,13 +55,13 @@ async def download_report(current_user: dict = Depends(check_role("patient"))):
     
     if not summary_data:
         # 3. Generate new analysis via engine
-        summary_data = await get_patient_health_summary(profile["_id"])
+        summary_data = await get_patient_health_summary(patient_id)
         if not summary_data:
             raise HTTPException(status_code=500, detail="Failed to generate biomechanical analysis summary.")
             
         # 4. Cache the result for today
         await db["analysis_results"].insert_one({
-            "patient_id": profile["_id"],
+            "patient_id": patient_id,
             "date": today,
             "type": "ai_medical_report",
             "data": summary_data,
@@ -66,7 +69,7 @@ async def download_report(current_user: dict = Depends(check_role("patient"))):
         })
     
     # 5. Debug output
-    print(f"--- GENERATING STREAMING PDF REPORT FOR {patient_id} ---")
+    print(f"--- GENERATING STREAMING PDF REPORT FOR PATENT {patient_id} ---")
 
     # 6. Generate PDF InMemory
     # We use the existing robust PDF service which returns a BytesIO buffer
@@ -77,6 +80,6 @@ async def download_report(current_user: dict = Depends(check_role("patient"))):
         pdf_buffer,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f"attachment; filename=Health_Report_{patient_id}_{today}.pdf"
+            "Content-Disposition": f"attachment; filename=Health_Report_{today}.pdf"
         },
     )
