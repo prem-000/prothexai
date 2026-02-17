@@ -398,56 +398,89 @@ if (contentLogout) {
 const btnDownload = document.getElementById('btn-download-report');
 if (btnDownload) {
     btnDownload.addEventListener('click', async () => {
-        try {
-            const originalContent = btnDownload.innerHTML;
-            btnDownload.innerHTML = '<span class="material-symbols-outlined animate-spin text-[14px]">progress_activity</span>';
-            btnDownload.disabled = true;
+        const token = localStorage.getItem('token');
+        const decoded = parseJwt(token);
+        const patientId = decoded ? decoded.patient_id : null;
 
-            const token = localStorage.getItem('token');
-            // Use full URL if needed, but relative path should work if served from same origin or proxy
-            // Check api.js for base URL usage. Usually fetch('/api/...') works.
-            // But here the user prompt explicitly said: fetch('/report/patient/download-report', ...)
-            // I'll assume relative path works or prepend raw base if needed.
-            // However, apiRequest in api.js handles base URL. Since we need blob, we can't use apiRequest directly easily without modifying it to return response.
-            // So we use fetch directly. I'll assume relative path '/report/...' is correct or needs 'http://localhost:8000'.
-            // Given the existing code uses `apiRequest` which likely has a base URL, I should check api.js BASE_URL.
-            // But line 99 in dashboard.js uses 'http://localhost:8000/patient/upload-gait'.
-            // So I should probably use 'http://localhost:8000' as well to be safe, or just '/' if proxy is set up.
-            // Let's use 'http://localhost:8000/report/patient/download-report' to be consistent with line 99.
+        if (!patientId) {
+            alert("Could not identify patient. Please login again.");
+            return;
+        }
 
-            const response = await fetch('http://localhost:8000/report/patient/download-report', {
+        await downloadReport(patientId);
+    });
+}
+
+// Dedicated Download Function
+async function downloadReport(patientId) {
+    const btnDownload = document.getElementById('btn-download-report');
+    const originalContent = btnDownload ? btnDownload.innerHTML : '';
+
+    if (btnDownload) {
+        btnDownload.innerHTML = '<span class="material-symbols-outlined animate-spin text-[14px]">progress_activity</span> Downloading...';
+        btnDownload.disabled = true;
+    }
+
+    try {
+        // API_BASE_URL is usually imported, but to keep this self-contained or consistent with api.js:
+        // If api.js exports API_BASE_URL, we should use it, but here we construct the URL manually or use relative if proxy.
+        // However, the instructions gave a snippet using API_BASE.
+        // Let's assume standard fetch to the backend.
+
+        // We need to construct the URL. If running locally, http://localhost:8000. If prod, relative or full.
+        // Let's use the same logic as handleUpload (hardcoded/relative) or better yet, grab it from a shared config if possible.
+        // For now, I'll use the relative path '/report/download/' which should work with the proxy/same-origin
+        // OR if we are on VS Code Live Server (5500) and backend is 8000, we need the full URL.
+        // The previous code in dashboard.js used 'http://localhost:8000'.
+        // I will use a helper to detect environment or just use the localhost default for dev as seen in file.
+
+        let baseUrl = 'http://localhost:8000';
+        if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+            baseUrl = 'https://prothexai.onrender.com'; // Production Backend
+        }
+
+        const response = await fetch(
+            `${baseUrl}/report/download/${patientId}`,
+            {
                 headers: {
-                    'Authorization': `Bearer ${token}`
+                    Authorization: `Bearer ${localStorage.getItem("token")}`
                 }
-            });
+            }
+        );
 
-            if (!response.ok) throw new Error('Download failed');
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error("Download failed: " + errText);
+        }
 
-            const blob = await response.blob();
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'ProthexaI_Report.pdf';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            window.URL.revokeObjectURL(url);
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
 
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `report_${patientId}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+
+        if (btnDownload) {
             btnDownload.innerHTML = originalContent;
             btnDownload.disabled = false;
+        }
 
-        } catch (error) {
-            console.error("Download error:", error);
+    } catch (error) {
+        console.error("Download error:", error);
+        if (btnDownload) {
             btnDownload.textContent = "Error";
             btnDownload.classList.add('text-red-500', 'border-red-500');
-
             setTimeout(() => {
-                btnDownload.innerHTML = '<span class="material-symbols-outlined text-[14px]">download</span> Report';
+                btnDownload.innerHTML = originalContent;
                 btnDownload.classList.remove('text-red-500', 'border-red-500');
                 btnDownload.disabled = false;
             }, 3000);
         }
-    });
+    }
 }
 
 // Init
