@@ -32,12 +32,16 @@ async def register(user_in: UserRegister):
     # Optional: Pre-initialize patient profile if role is patient
     if user_in.role == "patient":
         from app.models.database_models import PatientProfile
-        profile = PatientProfile(
+        from bson import ObjectId
+        profile_obj = PatientProfile(
             user_id=user_id,
             name=user_in.full_name,
             email=user_in.email
-        ).model_dump(by_alias=True, exclude_none=True)
-        await db["patient_profiles"].insert_one(profile)
+        )
+        profile_dict = profile_obj.model_dump(by_alias=True, exclude_none=True)
+        # Ensure user_id is stored as ObjectId, as model_dump might stringify it
+        profile_dict["user_id"] = ObjectId(user_id)
+        await db["patient_profiles"].insert_one(profile_dict)
     
     return user_dict
 

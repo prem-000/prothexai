@@ -75,7 +75,7 @@ async def create_or_update_profile(
     
     user_id = current_user["_id"]
     
-    # Check if profile already exists
+    # 1. Resolve Identity Robustly
     existing = await db["patient_profiles"].find_one({
         "$or": [
             {"user_id": user_id},
@@ -83,54 +83,44 @@ async def create_or_update_profile(
         ]
     })
     
-    # Prepare update data
-    update_data = data.model_dump(exclude_unset=True)
+    # 2. Extract Data (Exclude unset to keep existing DB values on update)
+    profile_data = data.model_dump(exclude_unset=True)
     
-    # Calculate BMI if height and weight are provided
-    # Fallback to existing values if update doesn't have them
-    h = update_data.get("height_cm")
-    w = update_data.get("weight_kg")
-    
-    if existing:
-        if h is None: h = existing.get("height_cm")
-        if w is None: w = existing.get("weight_kg")
+    # 3. BMI Calculation Logic (Shared)
+    h = profile_data.get("height_cm") or (existing.get("height_cm") if existing else 0)
+    w = profile_data.get("weight_kg") or (existing.get("weight_kg") if existing else 0)
     
     if h and w and h > 0:
         bmi = w / ((h / 100) ** 2)
-        update_data["bmi"] = round(bmi, 2)
+        profile_data["bmi"] = round(bmi, 2)
         
     if existing:
-        # UPDATE
+        # UPDATE: Only patch provided fields
         await db["patient_profiles"].update_one(
             {"_id": existing["_id"]},
-            {"$set": update_data}
+            {"$set": profile_data}
         )
         return {"message": "Profile updated successfully"}
     else:
-        # CREATE
-        # Ensure we have minimums if creating new, though schema might enforce basics
-        # Add user_id
-        update_data["user_id"] = ObjectId(user_id)
+        # CREATE: Ensure all model defaults are applied
+        # Remove user_id from profile_data if it exists to avoid multiple values error
+        profile_data.pop("user_id", None)
         
-        # Use defaults for missing fields if creating (Pydantic model would usually handle this but we used exclude_unset)
-        # So manually instantiate model to get defaults then update with our data?
-        # Or just let Pydantic handle it.
-        # Ideally: new_profile = PatientProfile(user_id=user_id, **data.model_dump())
-        # But data is a Subset schema now. 
-        # Let's just insert what we have, plus defaults from DB model.
-        
-        # DB Model defaults:
-        default_profile = PatientProfile(
+        new_profile = PatientProfile(
             user_id=user_id,
-            email=data.email or current_user.get("email"),
-            **update_data
+            **profile_data
         )
         
-        start_doc = default_profile.model_dump(by_alias=True, exclude_none=True)
-        # Ensure user_id is ObjectId
-        start_doc["user_id"] = ObjectId(start_doc["user_id"])
+        # Fallback for email if not provided in registration/form
+        if not new_profile.email:
+            new_profile.email = current_user.get("email")
+            
+        doc = new_profile.model_dump(by_alias=True, exclude_none=True)
         
-        await db["patient_profiles"].insert_one(start_doc)
+        # Ensure ObjectId persistence
+        doc["user_id"] = ObjectId(user_id)
+        
+        await db["patient_profiles"].insert_one(doc)
         return {"message": "Profile created successfully"}
 
 @router.post("/feedback")
