@@ -31,6 +31,13 @@ async def connect_to_mongo():
     await db_instance.db.patient_feedback.create_index("patient_id")
     await db_instance.db.patient_feedback.create_index("status")
     
+    # Analysis & Report Indexes
+    await db_instance.db.analysis_results.create_index("user_id")
+    await db_instance.db.analysis_results.create_index("record_id")
+    await db_instance.db.analysis_results.create_index("created_at")
+    await db_instance.db.weekly_reports.create_index("patient_id")
+    await db_instance.db.weekly_reports.create_index("created_at")
+    
     logger.info("MongoDB indexes created/verified.")
 
 async def close_mongo_connection():

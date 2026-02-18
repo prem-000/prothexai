@@ -1,88 +1,107 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Body
 from app.core.dependencies import get_current_user
 from app.database import get_db
-from app.services.ai_engine import ai_engine
-from app.models.database_models import AnalysisResult
+from app.services.analysis_service import analysis_service
+from app.models.analysis_schemas import AnalysisRequest, AnalysisResponse
 from bson import ObjectId
-from datetime import datetime
+from datetime import datetime, timezone
+import time
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
-@router.post("/run/{record_id}")
-async def run_analysis(record_id: str, current_user: dict = Depends(get_current_user)):
+@router.post("/analyze", response_model=AnalysisResponse)
+async def analyze_record(
+    request: AnalysisRequest, 
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Optimized endpoint for biomechanical analysis.
+    Performs purely mathematical calculations without blocking I/O or external AI calls.
+    Returns minimal JSON response under 500ms.
+    """
+    start_time = time.perf_counter()
     db = get_db()
-    
-    # 1. Find the patient profile
     user_id = current_user["_id"]
-    profile = await db["patient_profiles"].find_one({
-        "$or": [
-            {"user_id": user_id},
-            {"user_id": str(user_id)}
-        ]
-    })
-    if not profile:
-        raise HTTPException(status_code=404, detail="Profile not found")
-    
-    # 2. Find the record and verify ownership
-    record = await db["daily_metrics"].find_one({
-        "_id": ObjectId(record_id),
-        "patient_id": profile["_id"]
-    })
-    if not record:
-        raise HTTPException(status_code=404, detail="Record not found or access denied")
-    
-    # 3. Biomechanical analysis
-    # Prepare metrics with profile for the engine
-    record_with_profile = {**record, "profile": profile}
-    
-    gait_abnormality = ai_engine.analyze_gait(record)
-    skin_risk = ai_engine.analyze_skin_risk(record)
-    health_score = ai_engine.calculate_prosthetic_health_score(record_with_profile)
-    clinical_risk = ai_engine.determine_overall_risk(record_with_profile)
-    
-    # Recommendations logic
-    recommendations = []
-    if gait_abnormality == "Abnormal":
-        recommendations.append("Significant gait asymmetry detected. Clinical gait analysis recommended.")
-    if skin_risk == "High":
-        recommendations.append("Critical skin irritation risk. Inspect residual limb and socket immediately.")
-    if record.get("walking_speed_mps", 0) < 0.6:
-        recommendations.append("Low walking speed detected. Consider prosthetic alignment check.")
-    if record.get("pressure_distribution_index", 1.0) < 0.6:
-        recommendations.append("Load imbalance detected. Check socket padding and alignment.")
-    
-    # Systemic recommendations
-    if profile.get("bmi", 0) > 30:
-        recommendations.append("High BMI detected. Weight management may improve prosthetic comfort.")
-    if profile.get("blood_pressure_systolic", 0) > 140:
-        recommendations.append("Hypertension detected. Consult clinical team regarding cardiovascular stress.")
-    
-    if health_score < 60:
-        recommendations.append("Overall prosthetic health score is moderate. Consultation with a prosthetist advised.")
 
-    analysis_res = AnalysisResult(
-        record_id=ObjectId(record_id),
-        patient_id=profile["_id"],
-        gait_abnormality=gait_abnormality,
-        skin_risk=skin_risk,
-        prosthetic_health_score=health_score,
-        overall_clinical_risk=clinical_risk,
-        recommendations=recommendations
-    ).model_dump(by_alias=True, exclude_none=True)
-    
-    await db["analysis_results"].insert_one(analysis_res)
-    
-    # Clean output for client
-    analysis_res["id"] = str(analysis_res["_id"])
-    analysis_res.pop("_id", None)
-    analysis_res.pop("patient_id", None)
-    analysis_res.pop("record_id", None)
-    
-    # Add clinical indicators for doctor view convenience
-    analysis_res["clinical_indicators"] = {
-        "bmi": profile.get("bmi"),
-        "bp": f"{profile.get('blood_pressure_systolic')}/{profile.get('blood_pressure_diastolic')}",
-        "sugar": profile.get("blood_sugar_mg_dl")
-    }
-    
-    return analysis_res
+    try:
+        # 1. Fetch Patient Profile with Projection (Only required fields)
+        profile = await db["patient_profiles"].find_one(
+            {"$or": [{"user_id": user_id}, {"user_id": str(user_id)}]},
+            {"bmi": 1, "blood_pressure_systolic": 1, "blood_pressure_diastolic": 1, "blood_sugar_mg_dl": 1}
+        )
+        if not profile:
+            raise HTTPException(status_code=404, detail="Patient profile not found")
+
+        # 2. Fetch Daily Record
+        record_id = request.record_id
+        if not ObjectId.is_valid(record_id):
+            raise HTTPException(status_code=400, detail="Invalid record_id format")
+
+        record = await db["daily_metrics"].find_one(
+            {"_id": ObjectId(record_id)}
+        )
+        if not record:
+            raise HTTPException(status_code=404, detail="Biomechanical record not found")
+
+        # 3. Perform Analysis (Deterministic & Lightweight)
+        gait_score = analysis_service.calculate_gait_score(record)
+        pressure_risk = analysis_service.calculate_pressure_risk(record)
+        skin_risk = analysis_service.calculate_skin_risk(record)
+        risk_level = analysis_service.get_risk_level(gait_score, pressure_risk, skin_risk)
+        
+        flags = []
+        if gait_score < 75: flags.append("Abnormal Gait Symmetry")
+        if pressure_risk == "High": flags.append("High Pressure Risk")
+        if skin_risk == "High": flags.append("High Skin Risk")
+        
+        recommendations = analysis_service.generate_summary(
+            gait_score, pressure_risk, skin_risk, record, profile
+        )
+
+        # 4. Store Summarized Result
+        execution_time_ms = (time.perf_counter() - start_time) * 1000
+        
+        analysis_doc = {
+            "user_id": user_id,
+            "record_id": ObjectId(record_id),
+            "overall_score": gait_score,
+            "risk_level": risk_level,
+            "key_flags": flags,
+            "recommendation_summary": recommendations,
+            "execution_time_ms": execution_time_ms,
+            "created_at": datetime.now(timezone.utc)
+        }
+        
+        await db["analysis_results"].insert_one(analysis_doc)
+
+        # 5. Log Analysis Metadata
+        logger.info(
+            f"Analysis Complete: user={user_id}, "
+            f"record={record_id}, "
+            f"time={execution_time_ms:.2f}ms"
+        )
+
+        # 6. Return Minimal Response
+        return AnalysisResponse(
+            overall_score=gait_score,
+            risk_level=risk_level,
+            key_flags=flags,
+            recommendation_summary=recommendations,
+            execution_time_ms=execution_time_ms
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Analysis failed for record {request.record_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Analysis engine failed to process the request")
+
+@router.post("/run/{record_id}", deprecated=True)
+async def run_analysis_legacy(record_id: str, current_user: dict = Depends(get_current_user)):
+    """
+    Legacy endpoint. Use /analyze instead.
+    """
+    return await analyze_record(AnalysisRequest(record_id=record_id), current_user)
