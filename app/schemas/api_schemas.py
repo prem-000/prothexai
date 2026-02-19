@@ -41,19 +41,28 @@ class UserOut(BaseModel):
 
 # Patient Schemas
 class PatientProfileCreate(BaseModel):
-    name: str
+    name: str = Field(..., min_length=1, max_length=100)
     email: EmailStr
-    age: int
-    gender: str
-    height_cm: Optional[float] = Field(None, ge=120, le=220)
-    weight_kg: Optional[float] = Field(None, ge=30, le=200)
-    blood_pressure_systolic: Optional[int] = Field(None, ge=80, le=200)
-    blood_pressure_diastolic: Optional[int] = Field(None, ge=50, le=130)
-    blood_sugar_mg_dl: Optional[int] = Field(None, ge=60, le=400)
+    age: int = Field(..., ge=0, le=120)
+    gender: str = Field(..., min_length=1)
+    height_cm: float = Field(..., ge=50, le=250)
+    weight_kg: float = Field(..., ge=10, le=500)
+    blood_pressure_systolic: Optional[int] = Field(None, ge=50, le=250)
+    blood_pressure_diastolic: Optional[int] = Field(None, ge=30, le=150)
+    blood_sugar_mg_dl: Optional[int] = Field(None, ge=20, le=600)
     medical_conditions: Optional[List[str]] = []
     baseline_score: Optional[float] = 50.0
-    amputation_level: Optional[str] = None
-    device_type: Optional[str] = None
+    amputation_level: Optional[str] = Field(None, min_length=1)
+    device_type: Optional[str] = Field(None, min_length=1)
+
+    model_config = {
+        "extra": "forbid"
+    }
+
+class PatientProfileResponse(BaseModel):
+    status: str
+    message: str
+    data: Optional[Dict[str, Any]] = None
 
 class PatientProfileOut(BaseModel):
     id: str

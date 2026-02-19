@@ -27,9 +27,11 @@ async def connect_to_mongo():
     await db_instance.db.patient_profiles.create_index("user_id", unique=True)
     await db_instance.db.daily_metrics.create_index("patient_id")
     
-    # Feedback Indexes
+    # Feedback & Activity Indexes
     await db_instance.db.patient_feedback.create_index("patient_id")
     await db_instance.db.patient_feedback.create_index("status")
+    await db_instance.db.sensor_uploads.create_index("patient_id")
+    await db_instance.db.notifications.create_index("patient_id")
     
     # Analysis & Report Indexes
     await db_instance.db.analysis_results.create_index("user_id")

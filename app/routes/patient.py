@@ -1,12 +1,16 @@
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Request
 from app.core.dependencies import get_current_user, check_role
-from app.schemas.api_schemas import DailyInput, GaitUploadResponse, DashboardSummary, PatientProfileCreate, PatientProfileOut, FeedbackCreate
+from app.schemas.api_schemas import DailyInput, GaitUploadResponse, DashboardSummary, PatientProfileCreate, PatientProfileOut, FeedbackCreate, PatientProfileResponse
 from app.database import get_db
-from app.models.database_models import DailyRecord, SensorUpload, PatientFeedback
+from app.models.database_models import DailyRecord, SensorUpload, PatientFeedback, PatientProfile
 from bson import ObjectId
+from pydantic import ValidationError
 import csv
 import io
+import logging
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/patient", tags=["patient"])
 
@@ -65,63 +69,99 @@ async def get_profile(current_user: dict = Depends(check_role("patient"))):
         
     return profile
 
-@router.post("/profile")
+@router.post("/profile", response_model=PatientProfileResponse)
 async def create_or_update_profile(
-    data: PatientProfileCreate,
+    request: Request,
     current_user: dict = Depends(check_role("patient"))
 ):
-    from app.models.database_models import PatientProfile
+    """
+    Refactored profile endpoint to handle:
+    - Content-Type verification
+    - Request body logging on validation error
+    - Strict Pydantic validation
+    - Seamless upsert operation
+    - ObjectId conversion
+    """
     db = get_db()
-    
     user_id = current_user["_id"]
     
-    # 1. Resolve Identity Robustly
-    existing = await db["patient_profiles"].find_one({
-        "$or": [
-            {"user_id": user_id},
-            {"user_id": str(user_id)}
-        ]
-    })
+    # 1. Content-Type Check
+    content_type = request.headers.get("content-type", "")
+    if "application/json" not in content_type:
+        raise HTTPException(
+            status_code=400, 
+            detail="Content-Type must be application/json"
+        )
+
+    # 2. Get Raw Body for Logging
+    try:
+        raw_body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    # 3. Model Validation
+    try:
+        profile_input = PatientProfileCreate(**raw_body)
+    except ValidationError as e:
+        logger.error(f"Validation Failure | User: {user_id} | Body: {raw_body} | Errors: {e.errors()}")
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Validation failed",
+                "errors": e.errors(),
+                "body_received": raw_body
+            }
+        )
+
+    # 4. Prepare Data for DB
+    profile_data = profile_input.model_dump(exclude_unset=True)
     
-    # 2. Extract Data (Exclude unset to keep existing DB values on update)
-    profile_data = data.model_dump(exclude_unset=True)
-    
-    # 3. BMI Calculation Logic (Shared)
-    h = profile_data.get("height_cm") or (existing.get("height_cm") if existing else 0)
-    w = profile_data.get("weight_kg") or (existing.get("weight_kg") if existing else 0)
-    
+    # Ensure BMI is calculated
+    h = profile_data.get("height_cm")
+    w = profile_data.get("weight_kg")
     if h and w and h > 0:
-        bmi = w / ((h / 100) ** 2)
-        profile_data["bmi"] = round(bmi, 2)
-        
-    if existing:
-        # UPDATE: Only patch provided fields
-        await db["patient_profiles"].update_one(
-            {"_id": existing["_id"]},
-            {"$set": profile_data}
+        profile_data["bmi"] = round(w / ((h / 100) ** 2), 2)
+    
+    # Add timestamps and metadata
+    profile_data["updated_at"] = datetime.now(timezone.utc)
+    
+    try:
+        # 5. Robust Upsert Operation
+        # We use user_id as the unique key for patient profiles
+        result = await db["patient_profiles"].update_one(
+            {
+                "$or": [
+                    {"user_id": user_id},
+                    {"user_id": str(user_id)}
+                ]
+            },
+            {
+                "$set": profile_data,
+                "$setOnInsert": {
+                    "user_id": ObjectId(user_id),
+                    "created_at": datetime.now(timezone.utc)
+                }
+            },
+            upsert=True
         )
-        return {"message": "Profile updated successfully"}
-    else:
-        # CREATE: Ensure all model defaults are applied
-        # Remove user_id from profile_data if it exists to avoid multiple values error
-        profile_data.pop("user_id", None)
-        
-        new_profile = PatientProfile(
-            user_id=user_id,
-            **profile_data
+
+        status_msg = "Profile updated successfully" if result.modified_count > 0 else "Profile created successfully"
+        if result.matched_count == 0 and result.upserted_id is None:
+             # This case shouldn't happen with upsert=True unless some filter mismatch
+             pass
+
+        return PatientProfileResponse(
+            status="success",
+            message=status_msg,
+            data={"user_id": str(user_id)}
         )
-        
-        # Fallback for email if not provided in registration/form
-        if not new_profile.email:
-            new_profile.email = current_user.get("email")
-            
-        doc = new_profile.model_dump(by_alias=True, exclude_none=True)
-        
-        # Ensure ObjectId persistence
-        doc["user_id"] = ObjectId(user_id)
-        
-        await db["patient_profiles"].insert_one(doc)
-        return {"message": "Profile created successfully"}
+
+    except Exception as e:
+        logger.error(f"Database Error during profile upsert | User: {user_id} | Error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="An internal error occurred while storing profile data"
+        )
 
 @router.post("/feedback")
 async def submit_feedback(
